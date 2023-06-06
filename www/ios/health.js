@@ -53,8 +53,6 @@ dataTypes['vo2max'] = 'HKQuantityTypeIdentifierVO2Max';
 dataTypes['temperature'] = 'HKQuantityTypeIdentifierBodyTemperature';
 dataTypes['UVexposure'] = 'HKQuantityTypeIdentifierUVExposure';
 
-
-
 // for parseable units in HK, see https://developer.apple.com/documentation/healthkit/hkunit/1615733-unitfromstring?language=objc
 var units = [];
 units['steps'] = 'count';
@@ -612,7 +610,17 @@ cordova.addConstructor(function () {
   return navigator.health;
 });
 
+// requests authorization to HK, a wrapper on top of Telerik's plugin
+Health.prototype.observeChanges = function (updateUrl, sampleTypes, onSuccess, onError) {
+  window.plugins.healthkit.observeChanges({
+    'updateUrl': updateUrl,
+    'sampleTypes': getHKDataTypes(sampleTypes)
+  }, onSuccess, onError);
+};
 
+Health.prototype.sendObservedChanges = function (onSuccess, onError) {
+  window.plugins.healthkit.sendObservedChanges(onSuccess, onError);
+};
 // UTILITY functions
 
 // get iOS version number

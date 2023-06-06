@@ -3,6 +3,18 @@
 
 @interface HealthKit :CDVPlugin
 
++ (HKHealthStore *)sharedHealthStore;
+
++ (void)queryObservedSamples:(NSMutableArray *)observedSampleTypes currentResults:(NSMutableDictionary *)currentResults onComplete:(void(^)(NSMutableDictionary *results))onComplete onError:(void(^)(NSString *errorMsg))onError;
+
++ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
+
++ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError;
+
++ (void)findWorkoutsWithOnError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
+
++ (void)sendObservedChanges:(BOOL)force completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler;
+
 /**
  * Tell delegate whether or not health data is available
  *
@@ -149,5 +161,14 @@
  * @param command *CDVInvokedUrlCommand
  */
 - (void) deleteSamples:(CDVInvokedUrlCommand*)command;
+
+/**
+ * Observe changes on a given sample type
+ *
+ * @param command *CDVInvokedUrlCommand
+ */
+- (void)observeChanges:(CDVInvokedUrlCommand*)command;
+
+- (void)sendObservedChanges:(CDVInvokedUrlCommand*)command;
 
 @end

@@ -1,6 +1,8 @@
 #import "HealthKit.h"
 #import "HKHealthStore+AAPLExtensions.h"
 #import "WorkoutActivityConversion.h"
+#import <WebKit/WebKit.h>
+
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "OCNotLocalizedStringInspection"
@@ -21,10 +23,15 @@ static NSString *const HKPluginKeyAmount = @"amount";
 static NSString *const HKPluginKeyValue = @"value";
 static NSString *const HKPluginKeyCorrelationType = @"correlationType";
 static NSString *const HKPluginKeyObjects = @"samples";
+static NSString *const HKPluginKeySampleTypes = @"sampleTypes";
+static NSString *const HKPluginKeyUpdateUrl = @"updateUrl";
 static NSString *const HKPluginKeySourceName = @"sourceName";
 static NSString *const HKPluginKeySourceBundleId = @"sourceBundleId";
 static NSString *const HKPluginKeyMetadata = @"metadata";
 static NSString *const HKPluginKeyUUID = @"UUID";
+
+static NSDictionary *HKSampleTypeToUnit;
+static NSDictionary *HKSampleTypeToJSType;
 
 #pragma mark Categories
 
@@ -34,9 +41,9 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 @end
 
 // Public Interface extension category
-@interface HealthKit ()
-+ (HKHealthStore *)sharedHealthStore;
-@end
+//@interface HealthKit ()
+//+ (HKHealthStore *)sharedHealthStore;
+//@end
 
 // Internal interface
 @interface HealthKit (Internal)
@@ -67,6 +74,8 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 - (HKCorrelation *)getHKCorrelationWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate correlationTypeString:(NSString *)correlationTypeString objects:(NSSet *)objects metadata:(NSDictionary *)metadata error:(NSError **)error;
 
 + (void)triggerErrorCallbackWithMessage: (NSString *) message command: (CDVInvokedUrlCommand *) command delegate: (id<CDVCommandDelegate>) delegate;
+
++ (void)executeOnMainThread:(void (^)(void))block;
 @end
 
 /**
@@ -76,7 +85,102 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 #pragma mark Internal Interface
 
 @implementation HealthKit (Internal)
++ (void)initialize {
+    if( self == [HealthKit self]) {
+        HKSampleTypeToUnit = @{
+           @"HKQuantityTypeIdentifierStepCount" : @"count",
+           @"HKQuantityTypeIdentifierDistanceWalkingRunning" : @"m",
+           @"HKQuantityTypeIdentifierActiveEnergyBurned" : @"kcal",
+           @"HKQuantityTypeIdentifierBasalEnergyBurned" : @"kcal",
+           @"HKQuantityTypeIdentifierHeight" : @"m",
+           @"HKQuantityTypeIdentifierBodyMass" : @"kg",
+           @"HKQuantityTypeIdentifierBodyMassIndex" : @"count",
+           @"HKQuantityTypeIdentifierHeartRate" : @"count/min",
+           @"HKQuantityTypeIdentifierRestingHeartRate" : @"count/min",
+           @"HKQuantityTypeIdentifierHeartRateVariabilitySDNN" : @"ms",
+           @"HKQuantityTypeIdentifierBodyFatPercentage" : @"%",
+           @"HKQuantityTypeIdentifierWaistCircumference" : @"m",
+           @"HKQuantityTypeIdentifierDietaryEnergyConsumed" : @"kcal",
+           @"HKQuantityTypeIdentifierDietaryFatTotal" : @"g",
+           @"HKQuantityTypeIdentifierDietaryFatSaturated" : @"g",
+           @"HKQuantityTypeIdentifierDietaryFatPolyunsaturated" : @"g",
+           @"HKQuantityTypeIdentifierDietaryFatMonounsaturated" : @"g",
+           @"HKQuantityTypeIdentifierDietaryCholesterol" : @"mg",
+           @"HKQuantityTypeIdentifierDietarySodium" : @"mg",
+           @"HKQuantityTypeIdentifierDietaryPotassium" : @"mg",
+           @"HKQuantityTypeIdentifierDietaryCarbohydrates" : @"g",
+           @"HKQuantityTypeIdentifierDietaryFiber" : @"g",
+           @"HKQuantityTypeIdentifierDietarySugar" : @"g",
+           @"HKQuantityTypeIdentifierDietaryProtein" : @"g",
+           @"HKQuantityTypeIdentifierDietaryVitaminA" : @"mcg",
+           @"HKQuantityTypeIdentifierDietaryVitaminC" : @"mg",
+           @"HKQuantityTypeIdentifierDietaryCalcium" : @"mg",
+           @"HKQuantityTypeIdentifierDietaryIron" : @"mg",
+           @"HKQuantityTypeIdentifierDietaryWater" : @"ml",
+           @"HKQuantityTypeIdentifierDietaryCaffeine" : @"g",
+           @"HKQuantityTypeIdentifierBloodGlucose" : @"mmol/L",
+           @"HKQuantityTypeIdentifierInsulinDelivery" : @"IU",
+           @"HKQuantityTypeIdentifierAppleExerciseTime" : @"min",
+           @"HKQuantityTypeIdentifierBloodPressureSystolic" : @"mmHg",
+           @"HKQuantityTypeIdentifierBloodPressureDiastolic" : @"mmHg",
+           @"HKQuantityTypeIdentifierRespiratoryRate" : @"count/min",
+           @"HKQuantityTypeIdentifierOxygenSaturation" : @"%",
+           @"HKQuantityTypeIdentifierVO2Max" : @"ml/(kg*min)",
+           @"HKQuantityTypeIdentifierBodyTemperature" : @"degC",
+           @"HKQuantityTypeIdentifierUVExposure" : @"count"
+       };
+        
+        HKSampleTypeToJSType = @{
+            @"HKCategoryTypeIdentifierMindfulSession" : @"mindfulness",
+            @"HKQuantityTypeIdentifierStepCount" : @"steps",
+            @"HKQuantityTypeIdentifierFlightsClimbed" : @"stairs",
+            @"HKQuantityTypeIdentifierDistanceWalkingRunning" : @"distance",
+            @"HKQuantityTypeIdentifierActiveEnergyBurned" : @"calories.active",
+            @"HKQuantityTypeIdentifierBasalEnergyBurned" : @"calories.basal",
+            @"HKQuantityTypeIdentifierHeight" : @"height",
+            @"HKQuantityTypeIdentifierBodyMass" : @"weight",
+            @"HKQuantityTypeIdentifierBodyMassIndex" : @"bmi",
+            @"HKQuantityTypeIdentifierHeartRate" : @"heart_rate",
+            @"HKQuantityTypeIdentifierRestingHeartRate" : @"heart_rate.resting",
+            @"HKQuantityTypeIdentifierHeartRateVariabilitySDNN" : @"heart_rate.variability",
+            @"HKQuantityTypeIdentifierBodyFatPercentage" : @"fat_percentage",
+            @"HKQuantityTypeIdentifierWaistCircumference" : @"waist_circumference",
+            @"HKWorkoutTypeIdentifier" : @"activity",
+            @"HKCategoryTypeIdentifierSleepAnalysis" : @"sleep",
+            @"HKCorrelationTypeIdentifierFood" : @"nutrition",
+            @"HKQuantityTypeIdentifierDietaryEnergyConsumed" : @"nutrition.calories",
+            @"HKQuantityTypeIdentifierDietaryFatTotal" : @"nutrition.fat.total",
+            @"HKQuantityTypeIdentifierDietaryFatSaturated" : @"nutrition.fat.saturated",
+            @"HKQuantityTypeIdentifierDietaryFatPolyunsaturated" : @"nutrition.fat.polyunsaturated",
+            @"HKQuantityTypeIdentifierDietaryFatMonounsaturated" : @"nutrition.fat.monounsaturated",
+            @"HKQuantityTypeIdentifierDietaryCholesterol" : @"nutrition.cholesterol",
+            @"HKQuantityTypeIdentifierDietarySodium" : @"nutrition.sodium",
+            @"HKQuantityTypeIdentifierDietaryPotassium" : @"nutrition.potassium",
+            @"HKQuantityTypeIdentifierDietaryCarbohydrates" : @"nutrition.carbs.total",
+            @"HKQuantityTypeIdentifierDietaryFiber" : @"nutrition.dietary_fiber",
+            @"HKQuantityTypeIdentifierDietarySugar" : @"nutrition.sugar",
+            @"HKQuantityTypeIdentifierDietaryProtein" : @"nutrition.protein",
+            @"HKQuantityTypeIdentifierDietaryVitaminA" : @"nutrition.vitamin_a",
+            @"HKQuantityTypeIdentifierDietaryVitaminC" : @"nutrition.vitamin_c",
+            @"HKQuantityTypeIdentifierDietaryCalcium" : @"nutrition.calcium",
+            @"HKQuantityTypeIdentifierDietaryIron" : @"nutrition.iron",
+            @"HKQuantityTypeIdentifierDietaryWater" : @"nutrition.water",
+            @"HKQuantityTypeIdentifierDietaryCaffeine" : @"nutrition.caffeine",
+            @"HKQuantityTypeIdentifierBloodGlucose" : @"blood_glucose",
+            @"HKQuantityTypeIdentifierInsulinDelivery" : @"insulin",
+            @"HKQuantityTypeIdentifierAppleExerciseTime" : @"appleExerciseTime",
+            @"HKCorrelationTypeIdentifierBloodPressure" : @"blood_pressure",
+            @"HKQuantityTypeIdentifierBloodPressureSystolic" : @"blood_pressure_systolic",
+            @"HKQuantityTypeIdentifierBloodPressureDiastolic" : @"blood_pressure_diastolic",
+            @"HKQuantityTypeIdentifierRespiratoryRate" : @"resp_rate",
+            @"HKQuantityTypeIdentifierOxygenSaturation" : @"oxygen_saturation",
+            @"HKQuantityTypeIdentifierVO2Max" : @"vo2max",
+            @"HKQuantityTypeIdentifierBodyTemperature" : @"temperature",
+            @"HKQuantityTypeIdentifierUVExposure" : @"UVexposure"
+        };
 
+    }
+}
 /**
  * Check the authorization status for a HealthKit type and dispatch the callback with result
  *
@@ -124,6 +228,14 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 #pragma mark Internal Helpers
 
 @implementation HealthKit (InternalHelpers)
+
++ (void)executeOnMainThread:(void (^)(void))block {
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
+}
 
 /**
  * Get a string representation of an NSDate object
@@ -604,15 +716,15 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 
     [[HealthKit sharedHealthStore] requestAuthorizationToShareTypes:writeDataTypes readTypes:readDataTypes completion:^(BOOL success, NSError *error) {
         if (success) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                 [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-            });
+            }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.localizedDescription];
                 [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-            });
+            }];
         }
     }];
 }
@@ -707,9 +819,9 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     [[HealthKit sharedHealthStore] requestAuthorizationToShareTypes:types readTypes:(requestReadPermission ? types : nil) completion:^(BOOL success_requestAuth, NSError *error) {
         __block HealthKit *bSelf = self;
         if (!success_requestAuth) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         } else {
             HKWorkout *workout = [HKWorkout workoutWithActivityType:activityTypeEnum
                                                           startDate:startDate
@@ -763,63 +875,53 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 
                         [[HealthKit sharedHealthStore] addSamples:samples toWorkout:workout completion:^(BOOL success_addSamples, NSError *mostInnerError) {
                             if (success_addSamples) {
-                                dispatch_sync(dispatch_get_main_queue(), ^{
+                                [HealthKit executeOnMainThread:^{
                                     CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                                     [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                                });
+                                }];
                             } else {
-                                dispatch_sync(dispatch_get_main_queue(), ^{
+                                [HealthKit executeOnMainThread:^{
                                     [HealthKit triggerErrorCallbackWithMessage:mostInnerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                                });
+                                }];
                             }
                         }];
                     } else {
                       // no samples, all OK then!
-                      dispatch_sync(dispatch_get_main_queue(), ^{
+                        [HealthKit executeOnMainThread:^{
                           CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                           [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                      });
+                        }];
                     }
                 } else {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    }];
                 }
             }];
         }
     }];
 }
 
-/**
- * Find workout data
- *
- * @param command *CDVInvokedUrlCommand
- */
-- (void)findWorkouts:(CDVInvokedUrlCommand *)command {
-    NSMutableDictionary *args = command.arguments[0];
++ (void)findWorkoutsWithOnError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess {
     NSPredicate *workoutPredicate = nil;
     // TODO if a specific workouttype was passed, use that
     //  if (false) {
     //    workoutPredicate = [HKQuery predicateForWorkoutsWithWorkoutActivityType:HKWorkoutActivityTypeCycling];
     //  }
 
-    BOOL *includeCalsAndDist = (args[@"includeCalsAndDist"] != nil && [args[@"includeCalsAndDist"] boolValue]);
+    BOOL *includeCalsAndDist = YES;
 
     NSSet *types = [NSSet setWithObjects:[HKWorkoutType workoutType], nil];
     [[HealthKit sharedHealthStore] requestAuthorizationToShareTypes:nil readTypes:types completion:^(BOOL success, NSError *error) {
         __block HealthKit *bSelf = self;
         if (!success) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
-                [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            onError(error);
         } else {
 
 
-            HKSampleQuery *query = [[HKSampleQuery alloc] initWithSampleType:[HKWorkoutType workoutType] predicate:workoutPredicate limit:HKObjectQueryNoLimit sortDescriptors:nil resultsHandler:^(HKSampleQuery *sampleQuery, NSArray *results, NSError *innerError) {
+            HKSampleQuery *query = [[HKSampleQuery alloc] initWithSampleType:[HKWorkoutType workoutType] predicate:workoutPredicate limit:100 sortDescriptors:nil resultsHandler:^(HKSampleQuery *sampleQuery, NSArray *results, NSError *innerError) {
                 if (innerError) {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
-                        [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    onError(innerError);
                 } else {
                     NSMutableArray *finalResults = [[NSMutableArray alloc] initWithCapacity:results.count];
 
@@ -835,6 +937,42 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                             source = workout.source;
                         }
                         NSMutableDictionary *entry;
+                        NSDictionary *allStatistics = @{};
+                        NSMutableDictionary *statsDict = [NSMutableDictionary new];
+
+                        if (@available(iOS 16.0, *)) {
+                            allStatistics = workout.allStatistics;
+                                                        
+                            for (HKQuantityType *quantityType in allStatistics) {
+                                HKStatistics *statistics = allStatistics[quantityType];
+                                HKQuantity *averageQuantity = statistics.averageQuantity;
+                                if(averageQuantity == nil) {
+                                    averageQuantity = statistics.sumQuantity;
+                                }
+                                NSString *key = HKSampleTypeToJSType[quantityType.identifier];
+                                NSString *unitString = HKSampleTypeToUnit[quantityType.identifier];
+
+                                
+                                if (averageQuantity && key && unitString) {
+                                    HKUnit *unit = nil;
+                                    if ([unitString isEqualToString:@"mmol/L"]) {
+                                        // @see https://stackoverflow.com/a/30196642/1214598
+                                        unit = [[HKUnit moleUnitWithMetricPrefix:HKMetricPrefixMilli molarMass:HKUnitMolarMassBloodGlucose] unitDividedByUnit:[HKUnit literUnit]];
+                                    } else {
+                                        // issue 51
+                                        // @see https://github.com/Telerik-Verified-Plugins/HealthKit/issues/51
+                                        if ([unitString isEqualToString:@"percent"]) {
+                                            unitString = @"%";
+                                        }
+                                        unit = [HKUnit unitFromString:unitString];
+                                    }
+                                    if(unit != nil) {
+                                        double quantity = [averageQuantity doubleValueForUnit:unit];
+                                        statsDict[key] = [NSString stringWithFormat:@"%f %@", quantity, unitString];
+                                    }
+                                }
+                            }
+                        }
 
                         if(includeCalsAndDist != nil && includeCalsAndDist) {
                             double meters = [workout.totalDistance doubleValueForUnit:[HKUnit meterUnit]];
@@ -854,6 +992,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                         HKPluginKeySourceBundleId: source.bundleIdentifier,
                                         HKPluginKeySourceName: source.name,
                                         @"activityType": workoutActivity,
+                                        @"statistics": statsDict,
                                         @"UUID": [workout.UUID UUIDString]
                                 } mutableCopy
                             ];
@@ -866,6 +1005,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                         HKPluginKeySourceBundleId: source.bundleIdentifier,
                                         HKPluginKeySourceName: source.name,
                                         @"activityType": workoutActivity,
+                                        @"statistics": statsDict,
                                         @"UUID": [workout.UUID UUIDString]
                                 } mutableCopy
                             ];
@@ -874,15 +1014,38 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                         [finalResults addObject:entry];
                     }
 
-                    dispatch_sync(dispatch_get_main_queue(), ^{
-                        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
-                        [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    onSuccess(finalResults);
                 }
             }];
             [[HealthKit sharedHealthStore] executeQuery:query];
         }
     }];
+}
+/**
+ * Find workout data
+ *
+ * @param command *CDVInvokedUrlCommand
+ */
+- (void)findWorkouts:(CDVInvokedUrlCommand *)command {
+    // TODO if a specific workouttype was passed, use that
+    //  if (false) {
+    //    workoutPredicate = [HKQuery predicateForWorkoutsWithWorkoutActivityType:HKWorkoutActivityTypeCycling];
+    //  }
+
+    void (^onError)(NSError *error) = ^(NSError *error) {
+        [HealthKit executeOnMainThread:^{
+            [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:self.commandDelegate];
+        }];
+    };
+
+    void (^onSuccess)(NSArray *results) = ^(NSArray *results) {
+        [HealthKit executeOnMainThread:^{
+            CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:results];
+            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+        }];
+    };
+
+    [HealthKit findWorkoutsWithOnError:onError onSuccess:onSuccess];
 }
 
 /**
@@ -918,20 +1081,20 @@ static NSString *const HKPluginKeyUUID = @"UUID";
             HKQuantitySample *weightSample = [HKQuantitySample quantitySampleWithType:weightType quantity:weightQuantity startDate:date endDate:date];
             [[HealthKit sharedHealthStore] saveObject:weightSample withCompletion:^(BOOL success_save, NSError *errorInner) {
                 if (success_save) {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                         [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    }];
                 } else {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         [HealthKit triggerErrorCallbackWithMessage:errorInner.localizedDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    }];
                 }
             }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 }
@@ -971,22 +1134,22 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                     ];
 
                     //@TODO formerly dispatch_async
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:entry];
                         [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    }];
                 } else {
                     //@TODO formerly dispatch_async
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         NSString *errorDescription = ((errorInner.localizedDescription == nil) ? @"no data" : errorInner.localizedDescription);
                         [HealthKit triggerErrorCallbackWithMessage:errorDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    }];
                 }
             }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 }
@@ -1023,20 +1186,20 @@ static NSString *const HKPluginKeyUUID = @"UUID";
             HKQuantitySample *heightSample = [HKQuantitySample quantitySampleWithType:heightType quantity:heightQuantity startDate:date endDate:date];
             [[HealthKit sharedHealthStore] saveObject:heightSample withCompletion:^(BOOL success_save, NSError *innerError) {
                 if (success_save) {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                         [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    }];
                 } else {
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    }];
                 }
             }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 }
@@ -1076,22 +1239,22 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                     ];
 
                     //@TODO formerly dispatch_async
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:entry];
                         [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    }];
                 } else {
                     //@TODO formerly dispatch_async
-                    dispatch_sync(dispatch_get_main_queue(), ^{
+                    [HealthKit executeOnMainThread:^{
                         NSString *errorDescritption = ((errorInner.localizedDescription == nil) ? @"no data" : errorInner.localizedDescription);
                         [HealthKit triggerErrorCallbackWithMessage:errorDescritption command:command delegate:bSelf.commandDelegate];
-                    });
+                    }];
                 }
             }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 }
@@ -1289,9 +1452,9 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                               __block HealthKit *bSelf = self;
                                               if (error) {
                                                   handler();
-                                                  dispatch_sync(dispatch_get_main_queue(), ^{
+                                                  [HealthKit executeOnMainThread:^{
                                                       [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-                                                  });
+                                                  }];
                                               } else {
                                                   handler();
 #ifdef HKPLUGIN_DEBUG
@@ -1362,23 +1525,80 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     [[HealthKit sharedHealthStore] executeQuery:query];
 }
 
++ (void)queryObservedSamples:(NSMutableArray *)observedSampleTypes currentResults:(NSMutableDictionary *)currentResults onComplete:(void(^)(NSMutableDictionary *results))onComplete onError:(void(^)(NSString *errorMsg))onError {
+    
+    if ([observedSampleTypes count] == 0) {
+        onComplete(currentResults);
+        return;
+    }
+    
+    NSString *sampleTypeString = observedSampleTypes[0];
+    NSString *jsTypeString = HKSampleTypeToJSType[sampleTypeString];
+    [observedSampleTypes removeObjectAtIndex:0];
+
+    NSDate *now = [NSDate date];
+    NSDate *startDate = [NSDate dateWithTimeIntervalSinceNow: -24*60*60];
+
+    void (^onErrorObj)(NSError *error) = ^(NSError *error) {
+        onError(error.localizedDescription);
+    };
+    
+    void (^onErrorMsg)(NSString *errorMsg) = ^(NSString *errorMsg) {
+        onError(errorMsg);
+    };
+
+    void (^onSuccess)(NSArray *results) = ^(NSArray *results) {
+        currentResults[jsTypeString] = results;
+        
+        if ([observedSampleTypes count] > 0) {
+            [self queryObservedSamples:observedSampleTypes currentResults:currentResults onComplete:onComplete onError:onError];
+        } else {
+            onComplete(currentResults);
+        }
+    };
+
+    if ([sampleTypeString isEqual:@"HKWorkoutTypeIdentifier"]) {
+        [self findWorkoutsWithOnError:onErrorObj onSuccess:onSuccess];
+    } else {
+        NSString *unitString = HKSampleTypeToUnit[sampleTypeString];
+        HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
+
+        if ([type isKindOfClass:[HKQuantityType class]]) {
+            [self querySampleTypeAggregatedCore:startDate
+                                        endDate:now
+                               sampleTypeString:sampleTypeString
+                                     unitString:unitString
+                                    aggregation:@"fiveminutes"
+                             filterOutUserInput:NO
+                                      onSuccess:onSuccess
+                                        onError:onErrorMsg
+            ];
+        } else {
+            [self querySampleTypeCoreWithStartDate:startDate
+                                      endDate:now
+                             sampleTypeString:sampleTypeString
+                                   unitString:unitString
+                                        limit:1000
+                                    ascending:NO
+                           filterOutUserInput:NO
+                                      onError:onErrorObj
+                                    onSuccess:onSuccess
+            ];
+        }
+    }
+    
+}
+
 /**
  * Query a specified sample type
  *
  * @param command *CDVInvokedUrlCommand
  */
-- (void)querySampleType:(CDVInvokedUrlCommand *)command {
-    NSDictionary *args = command.arguments[0];
-    NSDate *startDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyStartDate] longValue]];
-    NSDate *endDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyEndDate] longValue]];
-    NSString *sampleTypeString = args[HKPluginKeySampleType];
-    NSString *unitString = args[HKPluginKeyUnit];
-    NSUInteger limit = ((args[@"limit"] != nil) ? [args[@"limit"] unsignedIntegerValue] : 1000);
-    BOOL ascending = (args[@"ascending"] != nil && [args[@"ascending"] boolValue]);
++ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess {
 
     HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
     if (type == nil) {
-        [HealthKit triggerErrorCallbackWithMessage:@"sampleType was invalid" command:command delegate:self.commandDelegate];
+        onError([NSError errorWithDomain:@"healthkit.cordova.plugin" code:1001 userInfo:@{NSLocalizedDescriptionKey: @"sampleType was invalid"}]);
         return;
     }
     HKUnit *unit = nil;
@@ -1400,7 +1620,6 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     NSPredicate *predicate1 = [HKQuery predicateForSamplesWithStartDate:startDate endDate:endDate options:HKQueryOptionStrictStartDate];
     NSPredicate *predicate2 = nil;
 
-    BOOL filterOutUserInput = (args[@"filterOutUserInput"] != nil && [args[@"filterOutUserInput"] boolValue]);
     if (filterOutUserInput) {
         predicate2 = [NSPredicate predicateWithFormat:@"metadata.%K != YES", HKMetadataKeyWasUserEntered];
     }
@@ -1424,9 +1643,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                                                       NSArray *results,
                                                                       NSError *innerError) {
                                                                   if (innerError != nil) {
-                                                                      dispatch_sync(dispatch_get_main_queue(), ^{
-                                                                          [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                                                                      });
+                                                                      onError(innerError);
                                                                   } else {
                                                                       NSMutableArray *finalResults = [[NSMutableArray alloc] initWithCapacity:results.count];
 
@@ -1441,9 +1658,15 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                                                           entry[HKPluginKeyEndDate] = [HealthKit stringFromDate:endSample];
                                                                           entry[HKPluginKeyUUID] = sample.UUID.UUIDString;
 
-                                                                          //@TODO Update deprecated API calls
-                                                                          entry[HKPluginKeySourceName] = sample.source.name;
-                                                                          entry[HKPluginKeySourceBundleId] = sample.source.bundleIdentifier;
+                                                                            if ([sample respondsToSelector:@selector(sourceRevision)]) {
+                                                                                HKSource *source = [[sample valueForKey:@"sourceRevision"] valueForKey:@"source"];
+                                                                                entry[HKPluginKeySourceName] = source.name;
+                                                                                entry[HKPluginKeySourceBundleId] = source.bundleIdentifier;
+                                                                            } else {
+                                                                                //@TODO Update deprecated API call
+                                                                                entry[HKPluginKeySourceName] = sample.source.name;
+                                                                                entry[HKPluginKeySourceBundleId] = sample.source.bundleIdentifier;
+                                                                            }
 
                                                                           if (sample.metadata == nil || ![NSJSONSerialization isValidJSONObject:sample.metadata]) {
                                                                               entry[HKPluginKeyMetadata] = @{};
@@ -1473,26 +1696,48 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 
                                                                               HKWorkout *wsample = (HKWorkout *) sample;
                                                                               [entry setValue:@(wsample.duration) forKey:@"duration"];
+                                                                              [entry setValue:@(wsample.workoutActivityType) forKey:@"activityType"];
 
                                                                           }
 
                                                                           [finalResults addObject:entry];
                                                                       }
 
-                                                                      dispatch_sync(dispatch_get_main_queue(), ^{
-                                                                          CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
-                                                                          [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                                                                      });
+                                                                      onSuccess(finalResults);
                                                                   }
                                                               }];
 
             [[HealthKit sharedHealthStore] executeQuery:query];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
-                [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            onError(error);
         }
     }];
+}
+
+- (void)querySampleType:(CDVInvokedUrlCommand *)command {
+    NSDictionary *args = command.arguments[0];
+    NSDate *startDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyStartDate] longValue]];
+    NSDate *endDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyEndDate] longValue]];
+    NSString *sampleTypeString = args[HKPluginKeySampleType];
+    NSString *unitString = args[HKPluginKeyUnit];
+    NSUInteger limit = ((args[@"limit"] != nil) ? [args[@"limit"] unsignedIntegerValue] : 1000);
+    BOOL ascending = (args[@"ascending"] != nil && [args[@"ascending"] boolValue]);
+    BOOL filterOutUserInput = (args[@"filterOutUserInput"] != nil && [args[@"filterOutUserInput"] boolValue]);
+
+    void (^onError)(NSError *error) = ^(NSError *error) {
+        [HealthKit executeOnMainThread:^{
+            [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:self.commandDelegate];
+        }];
+    };
+
+    void (^onSuccess)(NSArray *results) = ^(NSArray *results) {
+        [HealthKit executeOnMainThread:^{
+            CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:results];
+            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+        }];
+    };
+
+    [HealthKit querySampleTypeCoreWithStartDate:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString limit:limit ascending:ascending filterOutUserInput:filterOutUserInput onError:onError onSuccess:onSuccess];
 }
 
 /**
@@ -1500,20 +1745,17 @@ static NSString *const HKPluginKeyUUID = @"UUID";
  *
  * @param command *CDVInvokedUrlCommand
  */
-- (void)querySampleTypeAggregated:(CDVInvokedUrlCommand *)command {
-    NSDictionary *args = command.arguments[0];
-    NSDate *startDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyStartDate] longValue]];
-    NSDate *endDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyEndDate] longValue]];
-
-    NSString *sampleTypeString = args[HKPluginKeySampleType];
-    NSString *unitString = args[HKPluginKeyUnit];
-
++ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError {
+    
     NSCalendar *calendar = [NSCalendar currentCalendar];
     NSDateComponents *interval = [[NSDateComponents alloc] init];
-
-    NSString *aggregation = args[HKPluginKeyAggregation];
+    
     // TODO would be nice to also have the dev pass in the nr of hours/days/..
-    if ([@"hour" isEqualToString:aggregation]) {
+    if ([@"minute" isEqualToString:aggregation]) {
+        interval.minute = 1;
+    } else if ([@"fiveminutes" isEqualToString:aggregation]) {
+        interval.minute = 5;
+    } else if ([@"hour" isEqualToString:aggregation]) {
         interval.hour = 1;
     } else if ([@"week" isEqualToString:aggregation]) {
         interval.day = 7;
@@ -1535,7 +1777,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     HKStatisticsOptions statOpt = HKStatisticsOptionNone;
 
     if (quantityType == nil) {
-        [HealthKit triggerErrorCallbackWithMessage:@"sampleType is invalid" command:command delegate:self.commandDelegate];
+        onError(@"sampleType is invalid");
         return;
     } else if ([sampleTypeString isEqualToString:@"HKQuantityTypeIdentifierHeartRate"]) {
         statOpt = HKStatisticsOptionDiscreteAverage;
@@ -1556,14 +1798,13 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 
     HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
     if (type == nil) {
-        [HealthKit triggerErrorCallbackWithMessage:@"sampleType is invalid" command:command delegate:self.commandDelegate];
+        onError(@"sampleType is invalid");
         return;
     }
 
     NSPredicate *predicate1 = [HKQuery predicateForSamplesWithStartDate:startDate endDate:endDate options:HKQueryOptionStrictStartDate];
     NSPredicate *predicate2 = nil;
 
-    BOOL filterOutUserInput = (args[@"filterOutUserInput"] != nil && [args[@"filterOutUserInput"] boolValue]);
     if (filterOutUserInput) {
         predicate2 = [NSPredicate predicateWithFormat:@"metadata.%K != YES", HKMetadataKeyWasUserEntered];
     }
@@ -1588,9 +1829,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                 if (innerError) {
                     // Perform proper error handling here
                     //                    NSLog(@"*** An error occurred while calculating the statistics: %@ ***",error.localizedDescription);
-                    dispatch_sync(dispatch_get_main_queue(), ^{
-                        [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-                    });
+                    onError(innerError.localizedDescription);
                 } else {
                     // Get the daily steps over the past n days
                     //            HKUnit *unit = unitString!=nil ? [HKUnit unitFromString:unitString] : [HKUnit countUnit];
@@ -1634,23 +1873,41 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                                                    [finalResults addObject:entry];
                                                }];
 
-                    dispatch_sync(dispatch_get_main_queue(), ^{
-                        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
-                        [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-                    });
+                    onSuccess(finalResults);
                 }
             };
 
             [[HealthKit sharedHealthStore] executeQuery:query];
 
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
-                [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            onError(error.localizedDescription);
         }
     }];
 
 
+}
+
+- (void)querySampleTypeAggregated:(CDVInvokedUrlCommand *)command {
+    NSDictionary *args = command.arguments[0];
+    NSDate *startDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyStartDate] longValue]];
+    NSDate *endDate = [NSDate dateWithTimeIntervalSince1970:[args[HKPluginKeyEndDate] longValue]];
+    
+    NSString *sampleTypeString = args[HKPluginKeySampleType];
+    NSString *unitString = args[HKPluginKeyUnit];
+    NSString *aggregation = args[HKPluginKeyAggregation];
+    
+    BOOL filterOutUserInput = (args[@"filterOutUserInput"] != nil && [args[@"filterOutUserInput"] boolValue]);
+    
+    [HealthKit querySampleTypeAggregatedCore:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString aggregation:aggregation filterOutUserInput:filterOutUserInput onSuccess:^(NSArray *finalResults) {
+        [HealthKit executeOnMainThread:^{
+            CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
+            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+        }];
+    } onError:^(NSString *error) {
+        [HealthKit executeOnMainThread:^{
+            [HealthKit triggerErrorCallbackWithMessage:error command:command delegate:self.commandDelegate];
+        }];
+    }];
 }
 
 /**
@@ -1682,9 +1939,9 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     HKCorrelationQuery *query = [[HKCorrelationQuery alloc] initWithType:type predicate:predicate samplePredicates:nil completion:^(HKCorrelationQuery *correlationQuery, NSArray *correlations, NSError *error) {
         __block HealthKit *bSelf = self;
         if (error) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         } else {
             NSMutableArray *finalResults = [[NSMutableArray alloc] initWithCapacity:correlations.count];
             for (HKSample *sample in correlations) {
@@ -1765,10 +2022,10 @@ static NSString *const HKPluginKeyUUID = @"UUID";
                 [finalResults addObject:entry];
             }
 
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
                 [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-            });
+            }];
         }
     }];
     [[HealthKit sharedHealthStore] executeQuery:query];
@@ -1796,14 +2053,14 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     [[HealthKit sharedHealthStore] saveObject:sample withCompletion:^(BOOL success, NSError *innerError) {
         __block HealthKit *bSelf = self;
         if (success) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                 [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-            });
+            }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:innerError.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 
@@ -1831,14 +2088,14 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     [[HealthKit sharedHealthStore] saveObject:correlation withCompletion:^(BOOL success, NSError *saveError) {
         __block HealthKit *bSelf = self;
         if (success) {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
                 [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-            });
+            }];
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
+            [HealthKit executeOnMainThread:^{
                 [HealthKit triggerErrorCallbackWithMessage:saveError.localizedDescription command:command delegate:bSelf.commandDelegate];
-            });
+            }];
         }
     }];
 }
@@ -1869,18 +2126,165 @@ static NSString *const HKPluginKeyUUID = @"UUID";
     if (success) {
       [[HealthKit sharedHealthStore] deleteObjectsOfType:type predicate:predicate withCompletion:^(BOOL success, NSUInteger deletedObjectCount, NSError * _Nullable deletionError) {
         if (deletionError != nil) {
-          dispatch_sync(dispatch_get_main_queue(), ^{
-            [HealthKit triggerErrorCallbackWithMessage:deletionError.localizedDescription command:command delegate:bSelf.commandDelegate];
-          });
+            [HealthKit executeOnMainThread:^{
+                [HealthKit triggerErrorCallbackWithMessage:deletionError.localizedDescription command:command delegate:bSelf.commandDelegate];
+            }];
         } else {
-          dispatch_sync(dispatch_get_main_queue(), ^{
-            CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:(int)deletedObjectCount];
-            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
-          });
+            [HealthKit executeOnMainThread:^{
+                CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:(int)deletedObjectCount];
+                [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+            }];
         }
       }];
     }
   }];
+}
+
++ (void)sendObservedChanges:(BOOL)force completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler {
+    __block WKHTTPCookieStore *cookieStore = nil;
+    
+    [HealthKit executeOnMainThread:^{
+        cookieStore = [WKWebsiteDataStore defaultDataStore].httpCookieStore;
+    }];
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSArray<NSString *> *sampleTypes = [defaults objectForKey:@"HKObservedSampleTypes"];
+    NSDate *lastHKSampleObservation = [defaults objectForKey:@"lastHKSampleObservation"];
+    NSURL *updateUrl = [defaults URLForKey:@"HKUpdateUrl"];
+    if(!lastHKSampleObservation) {
+        lastHKSampleObservation = NSDate.distantPast;
+    }
+    NSTimeInterval timeSinceLastObservation = [[NSDate date] timeIntervalSinceDate:lastHKSampleObservation];
+
+    if(timeSinceLastObservation >= 3600 || force) {
+
+        // Send a POST request to the update URL
+        NSMutableURLRequest *request = [[NSMutableURLRequest alloc] init];
+        [request setHTTPMethod:@"POST"];
+        [request setURL:updateUrl];
+
+        [cookieStore getAllCookies:^(NSArray<NSHTTPCookie *> * _Nonnull cookies) {
+
+            NSString *cookieHeader = nil;
+            for (NSHTTPCookie *cookie in cookies) {
+                if (!cookieHeader) {
+                    cookieHeader = [NSString stringWithFormat: @"%@=%@",[cookie name],[cookie value]];
+                } else {
+                    cookieHeader = [NSString stringWithFormat: @"%@; %@=%@",cookieHeader,[cookie name],[cookie value]];
+                }
+            }
+            if (cookieHeader) {
+                [request addValue:cookieHeader forHTTPHeaderField:@"Cookie"];
+            }
+    
+            void (^onComplete)(NSMutableDictionary *results) = ^(NSMutableDictionary *results) {
+                NSError *error = nil;
+                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:results options:0 error:&error];
+                if(!jsonData) {
+                    errorHandler(error.localizedDescription);
+                } else {
+                    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+                    [request setHTTPBody:jsonData];
+                    
+                    NSURLSession *session = [NSURLSession sharedSession];
+                    NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                                                completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                        if (error) {
+                            errorHandler([error localizedDescription]);
+                        } else if (((NSHTTPURLResponse *)response).statusCode == 200) {
+                            if(completionHandler) {
+                                completionHandler();
+                            }
+                        } else {
+                            long code = ((NSHTTPURLResponse *)response).statusCode;
+                            NSString *msg = [NSString stringWithFormat:@"server returned status code %ld", code];
+                            errorHandler(msg);
+                        }
+                    }];
+                    [dataTask resume];
+                }
+            };
+    
+            NSMutableDictionary *finalResults = [NSMutableDictionary dictionary];
+            NSMutableArray *observedSampleTypes = [sampleTypes mutableCopy];
+            [HealthKit queryObservedSamples:observedSampleTypes currentResults:finalResults onComplete:onComplete onError:errorHandler];
+            
+            if(timeSinceLastObservation >= 3600) {
+                NSDate *currentDate = [NSDate date];
+                [defaults setObject:currentDate forKey:@"lastHKSampleObservation"];
+                [defaults synchronize];
+            }
+
+        }];
+    }
+}
+
+-(void)sendObservedChanges:(CDVInvokedUrlCommand*)command {
+    [HealthKit sendObservedChanges:YES
+                 completionHandler:^{
+                        [HealthKit executeOnMainThread:^{
+                              CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:YES];
+                              [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+                        }];
+                    }
+                      errorHandler:^(NSString *errorMsg) {
+                        [HealthKit executeOnMainThread:^{
+                            [HealthKit triggerErrorCallbackWithMessage:errorMsg command:command delegate:self.commandDelegate];
+                        }];
+                    }
+    ];
+}
+
+- (void)observeChanges:(CDVInvokedUrlCommand*)command {
+    NSMutableDictionary *args = command.arguments[0];
+
+    // read types
+    NSArray<NSString *> *sampleTypes = args[HKPluginKeySampleTypes];
+    NSString *updateUrlStr = args[HKPluginKeyUpdateUrl];
+    NSURL *updateUrl = [NSURL URLWithString:updateUrlStr];
+    NSMutableArray<NSString *> *filteredSampleTypes = [NSMutableArray new];
+
+    for (NSString *elem in sampleTypes) {
+        HKObjectType *type = nil;
+
+        if ([elem isEqual:@"HKWorkoutTypeIdentifier"]) {
+            type = [HKObjectType workoutType];
+        } else {
+            type = [HealthKit getHKObjectType:elem];
+        }
+
+        if (type == nil) {
+            CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"readTypes contains an invalid value"];
+            [result setKeepCallbackAsBool:YES];
+            [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+            // not returning deliberately to be future proof; other permissions are still asked
+        } else {
+            [filteredSampleTypes addObject:elem];
+        }
+    }
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:filteredSampleTypes forKey:@"HKObservedSampleTypes"];
+    [defaults setURL:updateUrl forKey:@"HKUpdateUrl"];
+    [defaults synchronize];
+
+    HKSampleType *sampleType = [HKObjectType quantityTypeForIdentifier:HKQuantityTypeIdentifierStepCount];
+
+    [[HealthKit sharedHealthStore] enableBackgroundDeliveryForType:sampleType
+                                       frequency:HKUpdateFrequencyHourly
+                                  withCompletion:^(BOOL success, NSError *error) {
+
+        if (!success) {
+            [HealthKit executeOnMainThread:^{
+                [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:self.commandDelegate];
+            }];
+        } else {
+            [HealthKit executeOnMainThread:^{
+              CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:YES];
+              [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+            }];
+        }
+    }];
 }
 
 @end

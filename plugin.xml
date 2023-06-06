@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
   id="cordova-plugin-health"
-  version="2.1.0">
+  version="2.2.2">
 
   <name>Cordova Health</name>
 
@@ -64,12 +64,18 @@
     <config-file target="*/Entitlements-Debug.plist" parent="com.apple.developer.healthkit.access">
       <array/>
     </config-file>
+    <config-file target="*/Entitlements-Debug.plist" parent="com.apple.developer.healthkit.background-delivery">
+      <true/>
+    </config-file>
 
     <config-file target="*/Entitlements-Release.plist" parent="com.apple.developer.healthkit">
       <true/>
     </config-file>
     <config-file target="*/Entitlements-Release.plist" parent="com.apple.developer.healthkit.access">
       <array/>
+    </config-file>
+    <config-file target="*/Entitlements-Release.plist" parent="com.apple.developer.healthkit.background-delivery">
+      <true/>
     </config-file>
 
     <header-file src="src/ios/WorkoutActivityConversion.h"/>
@@ -78,43 +84,10 @@
     <source-file src="src/ios/HKHealthStore+AAPLExtensions.m"/>
     <header-file src="src/ios/HealthKit.h"/>
     <source-file src="src/ios/HealthKit.m"/>
+    <header-file src="src/ios/AppDelegate+HealthKit.h"/>
+    <source-file src="src/ios/AppDelegate+HealthKit.m"/>
 
     <framework src="HealthKit.framework" weak="true" />
-  </platform>
-
-  <!-- android -->
-  <platform name="android">
-    <framework src="com.google.android.gms:play-services-fitness:$FIT_API_VERSION" />
-    <preference name="FIT_API_VERSION" default="21.1.0"/>
-
-    <framework src="com.google.android.gms:play-services-auth:$PLAY_AUTH_VERSION" />
-    <preference name="PLAY_AUTH_VERSION" default="20.2.0"/>
-
-
-    <config-file target="AndroidManifest.xml" parent="/*">
-      <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-      <uses-permission android:name="android.permission.BODY_SENSORS" />
-      <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
-      <!-- Use the following if API target is < 29 -->
-      <uses-permission android:name="android.gms.permission.ACTIVITY_RECOGNITION"/>
-      <!-- Use the following if API target is > 30 -->
-      <queries>
-        <package android:name="com.google.android.apps.fitness" />
-      </queries>
-    </config-file>
-
-    <config-file target="res/xml/config.xml" parent="/*">
-      <feature name="health">
-        <param name="android-package" value="org.apache.cordova.health.HealthPlugin" />
-      </feature>
-      <access origin="https://accounts.google.com/*" />
-    </config-file>
-
-    <source-file src="src/android/HealthPlugin.java" target-dir="src/org/apache/cordova/health/" />
-
-    <js-module src="www/android/health.js" name="health">
-      <clobbers target="navigator.health" />
-    </js-module>
   </platform>
 
 </plugin>

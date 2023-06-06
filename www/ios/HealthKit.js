@@ -29,7 +29,7 @@ var getChecker = function(options) {
     var value = options[type];
     if (type === 'startDate' || type === 'endDate') {
       if (!matches(value, Date)) throw new TypeError(type + ' must be a JavaScript Date');
-    } else if (type === 'samples') {
+    } else if (type === 'samples' || type === 'sampleTypes') {
       if (!Array.isArray(value)) throw new TypeError(type + ' must be a JavaScript Array');
     } else {
       if (!value) throw new TypeError('Missing required paramter ' + type);
@@ -123,6 +123,9 @@ define('saveCorrelation', {required: ['correlationType', 'samples']}, function(o
 });
 
 define('sumQuantityType', {required: ['sampleType']}, hasValidDates);
+
+define('sendObservedChanges',{noArgs: true});
+define('observeChanges', { required: ['updateUrl','sampleTypes']});
 
 HealthKit.install = function() {
   if (!window.plugins) window.plugins = {};
