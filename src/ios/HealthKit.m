@@ -32,6 +32,7 @@ static NSString *const HKPluginKeyUUID = @"UUID";
 
 static NSDictionary *HKSampleTypeToUnit;
 static NSDictionary *HKSampleTypeToJSType;
+static NSDictionary *HKNutritionTypeToSimplified;
 
 #pragma mark Categories
 
@@ -76,6 +77,11 @@ static NSDictionary *HKSampleTypeToJSType;
 + (void)triggerErrorCallbackWithMessage: (NSString *) message command: (CDVInvokedUrlCommand *) command delegate: (id<CDVCommandDelegate>) delegate;
 
 + (void)executeOnMainThread:(void (^)(void))block;
+
++ (NSDictionary *)filterDictionaryForJSON:(NSDictionary *)input;
+
++ (NSDictionary *)extractNutritionInfoFromFoodCorrelation:(HKCorrelation *)foodCorrelation;
+
 @end
 
 /**
@@ -178,6 +184,14 @@ static NSDictionary *HKSampleTypeToJSType;
             @"HKQuantityTypeIdentifierBodyTemperature" : @"temperature",
             @"HKQuantityTypeIdentifierUVExposure" : @"UVexposure"
         };
+        
+        HKNutritionTypeToSimplified = @{
+            HKQuantityTypeIdentifierDietaryEnergyConsumed: @"calories",
+            HKQuantityTypeIdentifierDietaryProtein: @"protein",
+            HKQuantityTypeIdentifierDietaryFatTotal: @"fat",
+            HKQuantityTypeIdentifierDietaryCarbohydrates: @"carbs",
+            HKQuantityTypeIdentifierDietaryFiber: @"fiber"
+        };
 
     }
 }
@@ -229,12 +243,61 @@ static NSDictionary *HKSampleTypeToJSType;
 
 @implementation HealthKit (InternalHelpers)
 
++ (NSDictionary *)extractNutritionInfoFromFoodCorrelation:(HKCorrelation *)foodCorrelation {
+    // Define your keys
+    NSArray *keys = @[HKQuantityTypeIdentifierDietaryEnergyConsumed, HKQuantityTypeIdentifierDietaryProtein, HKQuantityTypeIdentifierDietaryFatTotal, HKQuantityTypeIdentifierDietaryCarbohydrates, HKQuantityTypeIdentifierDietaryFiber];
+    
+    // Initialize the dictionary with 0 values for each type
+    NSMutableDictionary *nutritionInfo = [NSMutableDictionary dictionaryWithDictionary:@{
+        HKNutritionTypeToSimplified[HKQuantityTypeIdentifierDietaryEnergyConsumed]: @(0),
+        HKNutritionTypeToSimplified[HKQuantityTypeIdentifierDietaryProtein]: @(0),
+        HKNutritionTypeToSimplified[HKQuantityTypeIdentifierDietaryFatTotal]: @(0),
+        HKNutritionTypeToSimplified[HKQuantityTypeIdentifierDietaryCarbohydrates]: @(0),
+        HKNutritionTypeToSimplified[HKQuantityTypeIdentifierDietaryFiber]: @(0)
+    }];
+    
+    for (HKSample *sample in foodCorrelation.objects) {
+        if ([sample isKindOfClass:[HKQuantitySample class]]) {
+            HKQuantitySample *quantitySample = (HKQuantitySample *)sample;
+            if ([keys containsObject:quantitySample.quantityType.identifier]) {
+                NSString *key = HKNutritionTypeToSimplified[quantitySample.quantityType.identifier];
+                double existingValue = [nutritionInfo[key] doubleValue];
+                double valueToAdd = 0;
+                
+                if ([quantitySample.quantityType.identifier isEqualToString:HKQuantityTypeIdentifierDietaryEnergyConsumed]) {
+                    valueToAdd = [quantitySample.quantity doubleValueForUnit:[HKUnit kilocalorieUnit]];
+                } else {
+                    valueToAdd = [quantitySample.quantity doubleValueForUnit:[HKUnit gramUnit]];
+                }
+                
+                nutritionInfo[key] = @(existingValue + valueToAdd);
+            }
+        }
+    }
+    
+    return [nutritionInfo copy];
+}
+
 + (void)executeOnMainThread:(void (^)(void))block {
     if ([NSThread isMainThread]) {
         block();
     } else {
         dispatch_sync(dispatch_get_main_queue(), block);
     }
+}
+
++ (NSDictionary *)filterDictionaryForJSON:(NSDictionary *)input {
+    if(!input) {
+        return @{};
+    }
+    
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    [input enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
+        if ([key isKindOfClass:[NSString class]] && ([obj isKindOfClass:[NSString class]] || [obj isKindOfClass:[NSNumber class]])) {
+            result[key] = obj;
+        }
+    }];
+    return [result copy];
 }
 
 /**
@@ -810,6 +873,9 @@ static NSDictionary *HKSampleTypeToJSType;
         [HealthKit triggerErrorCallbackWithMessage:@"no duration or endDate is set" command:command delegate:self.commandDelegate];
         return;
     }
+    
+    NSDictionary *metadata = args[HKPluginKeyMetadata];
+    metadata = [HealthKit filterDictionaryForJSON:metadata];
 
     NSSet *types = [NSSet setWithObjects:
             [HKWorkoutType workoutType],
@@ -829,7 +895,7 @@ static NSDictionary *HKSampleTypeToJSType;
                                                            duration:0 // the diff between start and end is used
                                                   totalEnergyBurned:nrOfEnergyUnits
                                                       totalDistance:nrOfDistanceUnits
-                                                           metadata:nil]; // TODO find out if needed
+                                                           metadata:metadata]; // TODO find out if needed
 
             [[HealthKit sharedHealthStore] saveObject:workout withCompletion:^(BOOL success_save, NSError *innerError) {
                 if (success_save) {
@@ -876,7 +942,7 @@ static NSDictionary *HKSampleTypeToJSType;
                         [[HealthKit sharedHealthStore] addSamples:samples toWorkout:workout completion:^(BOOL success_addSamples, NSError *mostInnerError) {
                             if (success_addSamples) {
                                 [HealthKit executeOnMainThread:^{
-                                    CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+                                    CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:workout.UUID.UUIDString];
                                     [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
                                 }];
                             } else {
@@ -888,7 +954,7 @@ static NSDictionary *HKSampleTypeToJSType;
                     } else {
                       // no samples, all OK then!
                         [HealthKit executeOnMainThread:^{
-                          CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+                          CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:workout.UUID.UUIDString];
                           [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
                         }];
                     }
@@ -987,13 +1053,14 @@ static NSDictionary *HKSampleTypeToJSType;
                                         @"duration": @(workout.duration),
                                         HKPluginKeyStartDate: [HealthKit stringFromDate:workout.startDate],
                                         HKPluginKeyEndDate: [HealthKit stringFromDate:workout.endDate],
-                                        @"distance": metersString,
-                                        @"energy": calories,
-                                        HKPluginKeySourceBundleId: source.bundleIdentifier,
-                                        HKPluginKeySourceName: source.name,
-                                        @"activityType": workoutActivity,
+                                        @"distance": (metersString == nil) ? [NSNull null] : metersString,
+                                        @"energy": (calories == nil) ? [NSNull null] : calories,
+                                        HKPluginKeySourceBundleId: (source.bundleIdentifier == nil) ? [NSNull null] : source.bundleIdentifier,
+                                        HKPluginKeySourceName: (source.name == nil) ? [NSNull null] : source.name,
+                                        @"activityType": (workoutActivity == nil) ? [NSNull null] : workoutActivity,
                                         @"statistics": statsDict,
-                                        @"UUID": [workout.UUID UUIDString]
+                                        @"UUID": [workout.UUID UUIDString],
+                                        HKPluginKeyMetadata: [HealthKit filterDictionaryForJSON:workout.metadata]
                                 } mutableCopy
                             ];
                         }  else {
@@ -1002,11 +1069,12 @@ static NSDictionary *HKSampleTypeToJSType;
                                         @"duration": @(workout.duration),
                                         HKPluginKeyStartDate: [HealthKit stringFromDate:workout.startDate],
                                         HKPluginKeyEndDate: [HealthKit stringFromDate:workout.endDate],
-                                        HKPluginKeySourceBundleId: source.bundleIdentifier,
-                                        HKPluginKeySourceName: source.name,
-                                        @"activityType": workoutActivity,
+                                        HKPluginKeySourceBundleId: (source.bundleIdentifier == nil) ? [NSNull null] : source.bundleIdentifier,
+                                        HKPluginKeySourceName: (source.name == nil) ? [NSNull null] : source.name,
+                                        @"activityType": (workoutActivity == nil) ? [NSNull null] : workoutActivity,
                                         @"statistics": statsDict,
-                                        @"UUID": [workout.UUID UUIDString]
+                                        @"UUID": [workout.UUID UUIDString],
+                                        HKPluginKeyMetadata: [HealthKit filterDictionaryForJSON:workout.metadata]
                                 } mutableCopy
                             ];
                         }
@@ -1537,7 +1605,12 @@ static NSDictionary *HKSampleTypeToJSType;
     [observedSampleTypes removeObjectAtIndex:0];
 
     NSDate *now = [NSDate date];
-    NSDate *startDate = [NSDate dateWithTimeIntervalSinceNow: -24*60*60];
+    NSDate *startDate = [NSDate dateWithTimeIntervalSinceNow: -96*60*60];
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    startDate = [calendar startOfDayForDate:startDate];
+
+    NSDate *startOfNextDay = [calendar dateByAddingUnit:NSCalendarUnitDay value:1 toDate:now options:0];
+    NSDate *endDate = [startOfNextDay dateByAddingTimeInterval:-1];
 
     void (^onErrorObj)(NSError *error) = ^(NSError *error) {
         onError(error.localizedDescription);
@@ -1563,19 +1636,19 @@ static NSDictionary *HKSampleTypeToJSType;
         NSString *unitString = HKSampleTypeToUnit[sampleTypeString];
         HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
 
-        if ([type isKindOfClass:[HKQuantityType class]]) {
+        if ([type isKindOfClass:[HKQuantityType class]] && ![jsTypeString isEqualToString:@"weight"]) {
             [self querySampleTypeAggregatedCore:startDate
-                                        endDate:now
+                                        endDate:endDate
                                sampleTypeString:sampleTypeString
                                      unitString:unitString
-                                    aggregation:@"fiveminutes"
+                                    aggregation:@"day"
                              filterOutUserInput:NO
                                       onSuccess:onSuccess
                                         onError:onErrorMsg
             ];
         } else {
             [self querySampleTypeCoreWithStartDate:startDate
-                                      endDate:now
+                                      endDate:endDate
                              sampleTypeString:sampleTypeString
                                    unitString:unitString
                                         limit:1000
@@ -1597,10 +1670,14 @@ static NSDictionary *HKSampleTypeToJSType;
 + (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess {
 
     HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
+    HKSampleType *requestType = [HealthKit getHKSampleType:sampleTypeString];
     if (type == nil) {
         onError([NSError errorWithDomain:@"healthkit.cordova.plugin" code:1001 userInfo:@{NSLocalizedDescriptionKey: @"sampleType was invalid"}]);
         return;
+    } else if ([type.identifier isEqualToString:HKCorrelationTypeIdentifierFood]) {
+        requestType = [HealthKit getHKSampleType:HKQuantityTypeIdentifierDietaryEnergyConsumed];
     }
+    
     HKUnit *unit = nil;
     if (unitString != nil) {
         if ([unitString isEqualToString:@"mmol/L"]) {
@@ -1629,7 +1706,7 @@ static NSDictionary *HKSampleTypeToJSType;
 
     NSCompoundPredicate *compoundPredicate = [NSCompoundPredicate andPredicateWithSubpredicates:predicates];
 
-    NSSet *requestTypes = [NSSet setWithObjects:type, nil];
+    NSSet *requestTypes = [NSSet setWithObjects:requestType, nil];
     [[HealthKit sharedHealthStore] requestAuthorizationToShareTypes:nil readTypes:requestTypes completion:^(BOOL success, NSError *error) {
         __block HealthKit *bSelf = self;
         if (success) {
@@ -1682,10 +1759,23 @@ static NSDictionary *HKSampleTypeToJSType;
                                                                               entry[@"categoryType.identifier"] = csample.categoryType.identifier;
                                                                               entry[@"categoryType.description"] = csample.categoryType.description;
 
+                                                                          } else if ([sample isKindOfClass:[HKCorrelation class]]) {
+                                                                              
+                                                                              HKCorrelation *correlation = (HKCorrelation *)sample;
+                                                                              entry[HKPluginKeyCorrelationType] = correlation.correlationType.identifier;
+                                                                              
+                                                                              if([correlation.correlationType.identifier isEqualToString:HKCorrelationTypeIdentifierFood]) {
+                                                                                  entry[@"macros"] = [HealthKit extractNutritionInfoFromFoodCorrelation:correlation];
+                                                                              }
+
                                                                           } else if ([sample isKindOfClass:[HKCorrelationType class]]) {
 
                                                                               HKCorrelation *correlation = (HKCorrelation *) sample;
                                                                               entry[HKPluginKeyCorrelationType] = correlation.correlationType.identifier;
+                                                                              
+                                                                              if([correlation.correlationType.identifier isEqualToString:HKCorrelationTypeIdentifierFood]) {
+                                                                                  entry[@"macros"] = [HealthKit extractNutritionInfoFromFoodCorrelation:correlation];
+                                                                              }
 
                                                                           } else if ([sample isKindOfClass:[HKQuantitySample class]]) {
 
@@ -2089,7 +2179,7 @@ static NSDictionary *HKSampleTypeToJSType;
         __block HealthKit *bSelf = self;
         if (success) {
             [HealthKit executeOnMainThread:^{
-                CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+                CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:correlation.UUID.UUIDString];
                 [bSelf.commandDelegate sendPluginResult:result callbackId:command.callbackId];
             }];
         } else {
@@ -2098,6 +2188,54 @@ static NSDictionary *HKSampleTypeToJSType;
             }];
         }
     }];
+}
+
+- (void)deleteObjectById:(CDVInvokedUrlCommand *)command {
+    NSDictionary *args = command.arguments[0];
+    NSString *idString = args[@"id"];
+    NSString *objectType = args[@"type"];
+    __block HealthKit *bSelf = self;
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:idString];
+    
+    if (uuid == nil) {
+        [HealthKit executeOnMainThread:^{
+            [HealthKit triggerErrorCallbackWithMessage:@"Invalid UUID string" command:command delegate:bSelf.commandDelegate];
+        }];
+        return;
+    }
+    
+    HKSampleType *type = [HKObjectType workoutType];
+    if([objectType isEqualToString:@"food"]) {
+        type = [HKCorrelationType correlationTypeForIdentifier:HKCorrelationTypeIdentifierFood];
+    }
+    NSPredicate *predicate = [HKQuery predicateForObjectWithUUID:uuid];
+    
+    HKSampleQuery *query = [[HKSampleQuery alloc] initWithSampleType:type predicate:predicate limit:1 sortDescriptors:nil resultsHandler:^(HKSampleQuery * _Nonnull query, NSArray<__kindof HKSample *> * _Nullable results, NSError * _Nullable error) {
+        
+        if (!results.count) {
+            [HealthKit executeOnMainThread:^{
+                [HealthKit triggerErrorCallbackWithMessage:@"No object with that ID found to delete" command:command delegate:bSelf.commandDelegate];
+            }];
+            return;
+        }
+        
+        HKObject *objectToDelete = results[0];
+        
+        [[HealthKit sharedHealthStore] deleteObject:objectToDelete withCompletion:^(BOOL success, NSError * _Nullable error) {
+            if (success) {
+                [HealthKit executeOnMainThread:^{
+                    CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+                    [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
+                }];
+            } else {
+                [HealthKit executeOnMainThread:^{
+                    [HealthKit triggerErrorCallbackWithMessage:error.localizedDescription command:command delegate:bSelf.commandDelegate];
+                }];
+            }
+        }];
+    }];
+    
+    [[HealthKit sharedHealthStore] executeQuery:query];
 }
 
 /**
@@ -2140,23 +2278,27 @@ static NSDictionary *HKSampleTypeToJSType;
   }];
 }
 
-+ (void)sendObservedChanges:(BOOL)force completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler {
++ (void)sendObservedChanges:(int)minDelay completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler {
     __block WKHTTPCookieStore *cookieStore = nil;
     
     [HealthKit executeOnMainThread:^{
         cookieStore = [WKWebsiteDataStore defaultDataStore].httpCookieStore;
     }];
 
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    __block NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSArray<NSString *> *sampleTypes = [defaults objectForKey:@"HKObservedSampleTypes"];
-    NSDate *lastHKSampleObservation = [defaults objectForKey:@"lastHKSampleObservation"];
+    __block NSDate *lastHKSampleObservation = [defaults objectForKey:@"lastHKSampleObservation"];
     NSURL *updateUrl = [defaults URLForKey:@"HKUpdateUrl"];
     if(!lastHKSampleObservation) {
         lastHKSampleObservation = NSDate.distantPast;
     }
     NSTimeInterval timeSinceLastObservation = [[NSDate date] timeIntervalSinceDate:lastHKSampleObservation];
 
-    if(timeSinceLastObservation >= 3600 || force) {
+    if(timeSinceLastObservation >= minDelay) {
+
+        NSDate *currentDate = [NSDate date];
+        [defaults setObject:currentDate forKey:@"lastHKSampleObservation"];
+        [defaults synchronize];
 
         // Send a POST request to the update URL
         NSMutableURLRequest *request = [[NSMutableURLRequest alloc] init];
@@ -2176,11 +2318,15 @@ static NSDictionary *HKSampleTypeToJSType;
             if (cookieHeader) {
                 [request addValue:cookieHeader forHTTPHeaderField:@"Cookie"];
             }
-    
+
             void (^onComplete)(NSMutableDictionary *results) = ^(NSMutableDictionary *results) {
                 NSError *error = nil;
                 NSData *jsonData = [NSJSONSerialization dataWithJSONObject:results options:0 error:&error];
                 if(!jsonData) {
+                    //reset the timer if the request fails
+                    [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                    [defaults synchronize];
+
                     errorHandler(error.localizedDescription);
                 } else {
                     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
@@ -2190,6 +2336,10 @@ static NSDictionary *HKSampleTypeToJSType;
                     NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
                                                                 completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
                         if (error) {
+                            //reset the timer if the request fails
+                            [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                            [defaults synchronize];
+
                             errorHandler([error localizedDescription]);
                         } else if (((NSHTTPURLResponse *)response).statusCode == 200) {
                             if(completionHandler) {
@@ -2197,6 +2347,11 @@ static NSDictionary *HKSampleTypeToJSType;
                             }
                         } else {
                             long code = ((NSHTTPURLResponse *)response).statusCode;
+
+                            //reset the timer if the request fails
+                            [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                            [defaults synchronize];
+
                             NSString *msg = [NSString stringWithFormat:@"server returned status code %ld", code];
                             errorHandler(msg);
                         }
@@ -2208,19 +2363,15 @@ static NSDictionary *HKSampleTypeToJSType;
             NSMutableDictionary *finalResults = [NSMutableDictionary dictionary];
             NSMutableArray *observedSampleTypes = [sampleTypes mutableCopy];
             [HealthKit queryObservedSamples:observedSampleTypes currentResults:finalResults onComplete:onComplete onError:errorHandler];
-            
-            if(timeSinceLastObservation >= 3600) {
-                NSDate *currentDate = [NSDate date];
-                [defaults setObject:currentDate forKey:@"lastHKSampleObservation"];
-                [defaults synchronize];
-            }
 
         }];
+    } else if(completionHandler) {
+        completionHandler();
     }
 }
 
 -(void)sendObservedChanges:(CDVInvokedUrlCommand*)command {
-    [HealthKit sendObservedChanges:YES
+    [HealthKit sendObservedChanges:0
                  completionHandler:^{
                         [HealthKit executeOnMainThread:^{
                               CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:YES];

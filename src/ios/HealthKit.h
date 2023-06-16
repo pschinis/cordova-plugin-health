@@ -13,7 +13,7 @@
 
 + (void)findWorkoutsWithOnError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
 
-+ (void)sendObservedChanges:(BOOL)force completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler;
++ (void)sendObservedChanges:(int)minDelay completionHandler:(void(^)(void))completionHandler errorHandler:(void(^)(NSString *errorMsg))errorHandler;
 
 /**
  * Tell delegate whether or not health data is available
@@ -161,7 +161,7 @@
  * @param command *CDVInvokedUrlCommand
  */
 - (void) deleteSamples:(CDVInvokedUrlCommand*)command;
-
+- (void) deleteObjectById:(CDVInvokedUrlCommand *)command;
 /**
  * Observe changes on a given sample type
  *

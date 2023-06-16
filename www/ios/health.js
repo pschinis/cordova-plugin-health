@@ -105,14 +105,18 @@ Health.prototype.isAvailable = function (success, error) {
 };
 
 // returns the equivalent native HealthKit data type from the custom one
-var getHKDataTypes = function (dtArr) {
+var getHKDataTypes = function (dtArr,nutrCorr=false) {
   var HKDataTypes = [];
   for (var i = 0; i < dtArr.length; i++) {
     if ((dtArr[i] !== 'gender') && (dtArr[i] !== 'date_of_birth')) { // ignore gender and DOB
       if (dtArr[i] === 'nutrition') {
         // add all nutrition stuff
-        for (var dataType in dataTypes) {
-          if (dataType.startsWith('nutrition.')) HKDataTypes.push(dataTypes[dataType]);
+        if(nutrCorr) {
+          HKDataTypes.push(dataTypes[dtArr[i]]);
+        } else {
+          for (var dataType in dataTypes) {
+            if (dataType.startsWith('nutrition.')) HKDataTypes.push(dataTypes[dataType]);
+          }
         }
       } else if (dtArr[i] === 'blood_pressure') {
         HKDataTypes.push('HKQuantityTypeIdentifierBloodPressureSystolic');
@@ -605,6 +609,11 @@ Health.prototype.delete = function (data, onSuccess, onError) {
   window.plugins.healthkit.deleteSamples(data, onSuccess, onError);
 };
 
+//data should be { id, type } where type is one of activity or food and id is object UUID
+Health.prototype.deleteById = function (data, onSuccess, onError) {
+  window.plugins.healthkit.deleteObjectById(data, onSuccess, onError);
+};
+
 cordova.addConstructor(function () {
   navigator.health = new Health();
   return navigator.health;
@@ -614,7 +623,7 @@ cordova.addConstructor(function () {
 Health.prototype.observeChanges = function (updateUrl, sampleTypes, onSuccess, onError) {
   window.plugins.healthkit.observeChanges({
     'updateUrl': updateUrl,
-    'sampleTypes': getHKDataTypes(sampleTypes)
+    'sampleTypes': getHKDataTypes(sampleTypes,true)
   }, onSuccess, onError);
 };
 

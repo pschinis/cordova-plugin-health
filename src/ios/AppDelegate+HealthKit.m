@@ -28,28 +28,35 @@ void HKMethodSwizzle(Class c, SEL originalSelector) {
 - (BOOL)healthkit_application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
     [self healthkit_application:application didFinishLaunchingWithOptions:launchOptions];
     
-    HKSampleType *sampleType = [HKObjectType quantityTypeForIdentifier:HKQuantityTypeIdentifierStepCount];
+    HKSampleType *stepType = [HKObjectType quantityTypeForIdentifier:HKQuantityTypeIdentifierStepCount];
+    NSArray *typesToObserve = @[[HKObjectType workoutType],[HKObjectType correlationTypeForIdentifier:HKCorrelationTypeIdentifierFood],[HKQuantityType quantityTypeForIdentifier:HKQuantityTypeIdentifierBodyMass],stepType];
+    NSPredicate *sourcePredicate = [HKQuery predicateForObjectsFromSource:[HKSource defaultSource]];
+
     
-    HKObserverQuery *query =
-    [[HKObserverQuery alloc]
-     initWithSampleType:sampleType
-     predicate:nil
-     updateHandler:^(HKObserverQuery *query,
-                     HKObserverQueryCompletionHandler completionHandler,
-                     NSError *error) {
+    for (HKObjectType *sampleType in typesToObserve) {
+            HKObserverQuery *query = [[HKObserverQuery alloc]
+                initWithSampleType:sampleType
+                predicate:[NSCompoundPredicate notPredicateWithSubpredicate:sourcePredicate]
+                updateHandler:^(HKObserverQuery *query,
+                                HKObserverQueryCompletionHandler completionHandler,
+                                NSError *error) {
+                    int minDelay = (sampleType == stepType) ? 15*60 : 30;
 
-        if (error) {
-            NSLog(@"An error occured while setting up the stepCount observer. In your app, try to handle this gracefully. Error: %@", error);
-            return;
-        }
+                    if (error) {
+                        NSLog(@"An error occured while setting up the stepCount observer. In your app, try to handle this gracefully. Error: %@", error);
+                        return;
+                    }
 
-        [HealthKit sendObservedChanges:NO completionHandler:completionHandler errorHandler:^(NSString *errorMsg) {
-            NSLog(@"An error occured while sending HealthKit data. Error: %@", errorMsg);
-        }];
-        
-    }];
+                    [HealthKit sendObservedChanges:minDelay completionHandler:completionHandler errorHandler:^(NSString *errorMsg) {
+                        NSLog(@"An error occured while sending HealthKit data. Error: %@", errorMsg);
+                    }];
+            }];
 
-    [[HealthKit sharedHealthStore] executeQuery:query];
+            [[HealthKit sharedHealthStore] executeQuery:query];
+    }
+
+
+    
     
     return YES;
 }

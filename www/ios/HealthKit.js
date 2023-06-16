@@ -126,6 +126,7 @@ define('sumQuantityType', {required: ['sampleType']}, hasValidDates);
 
 define('sendObservedChanges',{noArgs: true});
 define('observeChanges', { required: ['updateUrl','sampleTypes']});
+define('deleteObjectById', { required: ['id','type']});
 
 HealthKit.install = function() {
   if (!window.plugins) window.plugins = {};
