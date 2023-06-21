@@ -7,9 +7,9 @@
 
 + (void)queryObservedSamples:(NSMutableArray *)observedSampleTypes currentResults:(NSMutableDictionary *)currentResults onComplete:(void(^)(NSMutableDictionary *results))onComplete onError:(void(^)(NSString *errorMsg))onError;
 
-+ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
++ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending returnSources:(BOOL)returnSources filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
 
-+ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError;
++ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation extraPredicate:(NSPredicate *)extraPredicate filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError;
 
 + (void)findWorkoutsWithOnError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess;
 

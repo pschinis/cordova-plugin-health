@@ -1593,6 +1593,62 @@ static NSDictionary *HKNutritionTypeToSimplified;
     [[HealthKit sharedHealthStore] executeQuery:query];
 }
 
++ (void)queryLooseMacros:(NSDate *)startDate endDate:(NSDate *)endDate remainingMacros:(NSMutableArray *)remainingMacros currentResult:(NSMutableDictionary *)currentResult excludeSources:(NSArray *)excludeSources onComplete:(void(^)(NSMutableArray *results))onComplete onError:(void(^)(NSString *errorMsg))onError {
+    
+    NSString *sampleTypeString = remainingMacros[0];
+    NSString *jsTypeString = HKNutritionTypeToSimplified[sampleTypeString];
+    [remainingMacros removeObjectAtIndex:0];
+    
+    NSString *unitString = HKSampleTypeToUnit[sampleTypeString];
+    
+    NSPredicate *sourcePredicate = [HKQuery predicateForObjectsFromSources:[NSSet setWithArray:excludeSources]];
+    NSPredicate *extraPredicate = [NSCompoundPredicate notPredicateWithSubpredicate:sourcePredicate];
+    
+    void (^onErrorMsg)(NSString *errorMsg) = ^(NSString *errorMsg) {
+        onError(errorMsg);
+    };
+
+    void (^onSuccess)(NSArray *results) = ^(NSArray *results) {
+        for (NSMutableDictionary *result in results) {
+            NSMutableDictionary *newVals = [@{ jsTypeString: result[@"quantity"] } mutableCopy];
+            if(currentResult[result[@"startDate"]]) {
+                [currentResult[result[@"startDate"]] addEntriesFromDictionary:newVals];
+            } else {
+                currentResult[result[@"startDate"]] = newVals;
+            }
+        }
+        
+        if ([remainingMacros count] > 0) {
+            [self queryLooseMacros:startDate endDate:endDate remainingMacros:remainingMacros currentResult:currentResult excludeSources:excludeSources onComplete:onComplete onError:onError];
+        } else {
+            NSMutableArray *finalResult = [NSMutableArray new];
+
+            for (NSString *startDateStr in currentResult) {
+                NSMutableDictionary *value = currentResult[startDateStr];
+                
+                [value setObject:startDateStr forKey:@"startDate"];
+                
+                if(value[@"calories"] && value[@"calories"] > 0) {
+                    [finalResult addObject:value];
+                }
+            }
+            onComplete(finalResult);
+        }
+    };
+
+    [self querySampleTypeAggregatedCore:startDate
+                                endDate:endDate
+                       sampleTypeString:sampleTypeString
+                             unitString:unitString
+                            aggregation:@"day"
+                         extraPredicate:extraPredicate
+                     filterOutUserInput:NO
+                              onSuccess:onSuccess
+                                onError:onErrorMsg
+    ];
+    
+}
+
 + (void)queryObservedSamples:(NSMutableArray *)observedSampleTypes currentResults:(NSMutableDictionary *)currentResults onComplete:(void(^)(NSMutableDictionary *results))onComplete onError:(void(^)(NSString *errorMsg))onError {
     
     if ([observedSampleTypes count] == 0) {
@@ -1629,6 +1685,26 @@ static NSDictionary *HKNutritionTypeToSimplified;
             onComplete(currentResults);
         }
     };
+    
+    void (^onSuccessMacros)(NSArray *results) = ^(NSArray *results) {
+        void (^onSuccessAggMacs)(NSArray *aggResults) = ^(NSArray *aggResults) {
+            for(NSMutableDictionary *result in results) {
+                [result removeObjectForKey:@"source"];
+            }
+            NSArray *finalResults = [results arrayByAddingObjectsFromArray:aggResults];
+            onSuccess(finalResults);
+        };
+        
+        NSMutableArray *sources = [[NSMutableArray alloc] init];
+        
+        for (NSDictionary *dict in results) {
+            if(dict[@"source"]) {
+                [sources addObject:[dict objectForKey:@"source"]];
+            }
+        }
+        
+        [self queryLooseMacros:startDate endDate:endDate remainingMacros:[[HKNutritionTypeToSimplified allKeys] mutableCopy] currentResult:[@{} mutableCopy] excludeSources:sources onComplete:onSuccessAggMacs onError:onError];
+    };
 
     if ([sampleTypeString isEqual:@"HKWorkoutTypeIdentifier"]) {
         [self findWorkoutsWithOnError:onErrorObj onSuccess:onSuccess];
@@ -1642,6 +1718,7 @@ static NSDictionary *HKNutritionTypeToSimplified;
                                sampleTypeString:sampleTypeString
                                      unitString:unitString
                                     aggregation:@"day"
+                                 extraPredicate:nil
                              filterOutUserInput:NO
                                       onSuccess:onSuccess
                                         onError:onErrorMsg
@@ -1653,9 +1730,10 @@ static NSDictionary *HKNutritionTypeToSimplified;
                                    unitString:unitString
                                         limit:1000
                                     ascending:NO
+                                     returnSources:[sampleTypeString isEqualToString:HKCorrelationTypeIdentifierFood]
                            filterOutUserInput:NO
                                       onError:onErrorObj
-                                    onSuccess:onSuccess
+                                         onSuccess:([sampleTypeString isEqualToString:HKCorrelationTypeIdentifierFood] ? onSuccessMacros : onSuccess)
             ];
         }
     }
@@ -1667,7 +1745,7 @@ static NSDictionary *HKNutritionTypeToSimplified;
  *
  * @param command *CDVInvokedUrlCommand
  */
-+ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess {
++ (void)querySampleTypeCoreWithStartDate:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString limit:(NSUInteger)limit ascending:(BOOL)ascending returnSources:(BOOL)returnSources filterOutUserInput:(BOOL)filterOutUserInput onError:(void(^)(NSError *error))onError onSuccess:(void(^)(NSArray *results))onSuccess {
 
     HKSampleType *type = [HealthKit getHKSampleType:sampleTypeString];
     HKSampleType *requestType = [HealthKit getHKSampleType:sampleTypeString];
@@ -1735,14 +1813,20 @@ static NSDictionary *HKNutritionTypeToSimplified;
                                                                           entry[HKPluginKeyEndDate] = [HealthKit stringFromDate:endSample];
                                                                           entry[HKPluginKeyUUID] = sample.UUID.UUIDString;
 
-                                                                            if ([sample respondsToSelector:@selector(sourceRevision)]) {
-                                                                                HKSource *source = [[sample valueForKey:@"sourceRevision"] valueForKey:@"source"];
-                                                                                entry[HKPluginKeySourceName] = source.name;
-                                                                                entry[HKPluginKeySourceBundleId] = source.bundleIdentifier;
-                                                                            } else {
+                                                                          if ([sample respondsToSelector:@selector(sourceRevision)]) {
+                                                                              HKSource *source = [[sample valueForKey:@"sourceRevision"] valueForKey:@"source"];
+                                                                              entry[HKPluginKeySourceName] = source.name;
+                                                                              entry[HKPluginKeySourceBundleId] = source.bundleIdentifier;
+                                                                              if(returnSources) {
+                                                                                  entry[@"source"] = source;
+                                                                              }
+                                                                          } else {
                                                                                 //@TODO Update deprecated API call
                                                                                 entry[HKPluginKeySourceName] = sample.source.name;
                                                                                 entry[HKPluginKeySourceBundleId] = sample.source.bundleIdentifier;
+                                                                                if(returnSources) {
+                                                                                    entry[@"source"] = sample.source;
+                                                                                }
                                                                             }
 
                                                                           if (sample.metadata == nil || ![NSJSONSerialization isValidJSONObject:sample.metadata]) {
@@ -1827,7 +1911,7 @@ static NSDictionary *HKNutritionTypeToSimplified;
         }];
     };
 
-    [HealthKit querySampleTypeCoreWithStartDate:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString limit:limit ascending:ascending filterOutUserInput:filterOutUserInput onError:onError onSuccess:onSuccess];
+    [HealthKit querySampleTypeCoreWithStartDate:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString limit:limit ascending:ascending returnSources:NO filterOutUserInput:filterOutUserInput onError:onError onSuccess:onSuccess];
 }
 
 /**
@@ -1835,7 +1919,7 @@ static NSDictionary *HKNutritionTypeToSimplified;
  *
  * @param command *CDVInvokedUrlCommand
  */
-+ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError {
++ (void)querySampleTypeAggregatedCore:(NSDate *)startDate endDate:(NSDate *)endDate sampleTypeString:(NSString *)sampleTypeString unitString:(NSString *)unitString aggregation:(NSString *)aggregation extraPredicate:(NSPredicate *)extraPredicate filterOutUserInput:(BOOL)filterOutUserInput onSuccess:(void (^)(NSArray *))onSuccess onError:(void (^)(NSString *))onError {
     
     NSCalendar *calendar = [NSCalendar currentCalendar];
     NSDateComponents *interval = [[NSDateComponents alloc] init];
@@ -1900,7 +1984,14 @@ static NSDictionary *HKNutritionTypeToSimplified;
     }
 
     // only include the user input predicate if it is not nil
-    NSArray *predicates = predicate2 != nil ? @[predicate1, predicate2] : @[predicate1];
+    NSMutableArray *predicates = [@[predicate1] mutableCopy];
+    if(predicate2) {
+        [predicates addObject:predicate2];
+    }
+    
+    if(extraPredicate) {
+        [predicates addObject:extraPredicate];
+    }
 
     NSCompoundPredicate *compoundPredicate = [NSCompoundPredicate andPredicateWithSubpredicates:predicates];
 
@@ -1988,7 +2079,7 @@ static NSDictionary *HKNutritionTypeToSimplified;
     
     BOOL filterOutUserInput = (args[@"filterOutUserInput"] != nil && [args[@"filterOutUserInput"] boolValue]);
     
-    [HealthKit querySampleTypeAggregatedCore:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString aggregation:aggregation filterOutUserInput:filterOutUserInput onSuccess:^(NSArray *finalResults) {
+    [HealthKit querySampleTypeAggregatedCore:startDate endDate:endDate sampleTypeString:sampleTypeString unitString:unitString aggregation:aggregation extraPredicate:nil filterOutUserInput:filterOutUserInput onSuccess:^(NSArray *finalResults) {
         [HealthKit executeOnMainThread:^{
             CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:finalResults];
             [self.commandDelegate sendPluginResult:result callbackId:command.callbackId];
