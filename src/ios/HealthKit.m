@@ -1625,11 +1625,17 @@ static NSDictionary *HKNutritionTypeToSimplified;
 
             for (NSString *startDateStr in currentResult) {
                 NSMutableDictionary *value = currentResult[startDateStr];
-                
-                [value setObject:startDateStr forKey:@"startDate"];
-                
-                if(value[@"calories"] && value[@"calories"] > 0) {
-                    [finalResult addObject:value];
+                                
+                if(value[@"calories"]) {
+                    int cals = [value[@"calories"] intValue];
+                    if(cals > 0) {
+                        NSMutableDictionary *finalValue = [@{} mutableCopy];
+                        [finalValue setObject:value forKey:@"macros"];
+                        [finalValue setObject:startDateStr forKey:@"startDate"];
+                        [finalValue setObject:@"aggregated" forKey:@"sourceBundleId"];
+
+                        [finalResult addObject:finalValue];
+                    }
                 }
             }
             onComplete(finalResult);
