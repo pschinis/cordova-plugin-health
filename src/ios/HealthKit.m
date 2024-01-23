@@ -2402,66 +2402,84 @@ static NSDictionary *HKNutritionTypeToSimplified;
         [request setHTTPMethod:@"POST"];
         [request setURL:updateUrl];
 
-        [cookieStore getAllCookies:^(NSArray<NSHTTPCookie *> * _Nonnull cookies) {
+        @try {
+            [cookieStore getAllCookies:^(NSArray<NSHTTPCookie *> * _Nonnull cookies) {
 
-            NSString *cookieHeader = nil;
-            for (NSHTTPCookie *cookie in cookies) {
-                if (!cookieHeader) {
-                    cookieHeader = [NSString stringWithFormat: @"%@=%@",[cookie name],[cookie value]];
-                } else {
-                    cookieHeader = [NSString stringWithFormat: @"%@; %@=%@",cookieHeader,[cookie name],[cookie value]];
+                NSString *cookieHeader = nil;
+                for (NSHTTPCookie *cookie in cookies) {
+                    if (!cookieHeader) {
+                        cookieHeader = [NSString stringWithFormat: @"%@=%@",[cookie name],[cookie value]];
+                    } else {
+                        cookieHeader = [NSString stringWithFormat: @"%@; %@=%@",cookieHeader,[cookie name],[cookie value]];
+                    }
                 }
-            }
-            if (cookieHeader) {
-                [request addValue:cookieHeader forHTTPHeaderField:@"Cookie"];
-            }
+                if (cookieHeader) {
+                    [request addValue:cookieHeader forHTTPHeaderField:@"Cookie"];
+                }
 
-            void (^onComplete)(NSMutableDictionary *results) = ^(NSMutableDictionary *results) {
-                NSError *error = nil;
-                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:results options:0 error:&error];
-                if(!jsonData) {
-                    //reset the timer if the request fails
-                    [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
-                    [defaults synchronize];
+                void (^onComplete)(NSMutableDictionary *results) = ^(NSMutableDictionary *results) {
+                    NSError *error = nil;
+                    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:results options:0 error:&error];
+                    if(!jsonData) {
+                        //reset the timer if the request fails
+                        [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                        [defaults synchronize];
 
-                    errorHandler(error.localizedDescription);
-                } else {
-                    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-                    [request setHTTPBody:jsonData];
-                    
-                    NSURLSession *session = [NSURLSession sharedSession];
-                    NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
-                                                                completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-                        if (error) {
-                            //reset the timer if the request fails
-                            [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
-                            [defaults synchronize];
+                        errorHandler(error.localizedDescription);
+                    } else {
+                        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+                        [request setHTTPBody:jsonData];
+                        
+                        NSURLSession *session = [NSURLSession sharedSession];
+                        NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request
+                                                                    completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                            if (error) {
+                                //reset the timer if the request fails
+                                [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                                [defaults synchronize];
 
-                            errorHandler([error localizedDescription]);
-                        } else if (((NSHTTPURLResponse *)response).statusCode == 200) {
-                            if(completionHandler) {
-                                completionHandler();
+                                errorHandler([error localizedDescription]);
+                            } else if (((NSHTTPURLResponse *)response).statusCode == 200) {
+                                if(completionHandler) {
+                                    completionHandler();
+                                }
+                            } else {
+                                long code = ((NSHTTPURLResponse *)response).statusCode;
+
+                                //reset the timer if the request fails
+                                [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
+                                [defaults synchronize];
+
+                                NSString *msg = [NSString stringWithFormat:@"server returned status code %ld", code];
+                                errorHandler(msg);
                             }
-                        } else {
-                            long code = ((NSHTTPURLResponse *)response).statusCode;
+                        }];
+                        [dataTask resume];
+                    }
+                };
+        
+                NSMutableDictionary *finalResults = [NSMutableDictionary dictionary];
+                NSMutableArray *observedSampleTypes = [sampleTypes mutableCopy];
+                [HealthKit queryObservedSamples:observedSampleTypes currentResults:finalResults onComplete:onComplete onError:errorHandler];
 
-                            //reset the timer if the request fails
-                            [defaults setObject:lastHKSampleObservation forKey:@"lastHKSampleObservation"];
-                            [defaults synchronize];
-
-                            NSString *msg = [NSString stringWithFormat:@"server returned status code %ld", code];
-                            errorHandler(msg);
-                        }
-                    }];
-                    [dataTask resume];
+            }];
+        } @catch (NSException *exception) {
+                // Create a string with the exception name, reason, and call stack
+                NSMutableString *errorString = [NSMutableString stringWithString:@"Exception Details:\n"];
+                [errorString appendFormat:@"Name: %@\n", exception.name];
+                [errorString appendFormat:@"Reason: %@\n", exception.reason];
+                [errorString appendString:@"Call Stack:\n"];
+                
+                for (NSString *call in exception.callStackSymbols) {
+                    [errorString appendFormat:@"%@\n", call];
                 }
-            };
-    
-            NSMutableDictionary *finalResults = [NSMutableDictionary dictionary];
-            NSMutableArray *observedSampleTypes = [sampleTypes mutableCopy];
-            [HealthKit queryObservedSamples:observedSampleTypes currentResults:finalResults onComplete:onComplete onError:errorHandler];
 
-        }];
+                NSLog(@"Exception caught during getAllCookies: %@", errorString);
+                if (errorHandler) {
+                    errorHandler(errorString);
+                }
+        } @finally {
+        }
     } else if(completionHandler) {
         completionHandler();
     }
