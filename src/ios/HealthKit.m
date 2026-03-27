@@ -438,11 +438,19 @@ static NSDictionary *HKNutritionTypeToSimplified;
         if (![inputDictionary hasAllRequiredKeys:@[HKPluginKeyUnit] error:error]) return nil;
         NSString *unitString = [inputDictionary objectForKey:HKPluginKeyUnit];
 
+            id amountValue = inputDictionary[HKPluginKeyAmount];
+            if (amountValue == nil || [amountValue isKindOfClass:[NSNull class]]) {
+                if (error) {
+                    *error = [NSError errorWithDomain:@"HealthKit" code:0 userInfo:@{NSLocalizedDescriptionKey: @"amount is required but was null"}];
+                }
+                return nil;
+            }
+
             return [HealthKit getHKQuantitySampleWithStartDate:startDate
                                                    endDate:endDate
                                           sampleTypeString:sampleTypeString
                                             unitTypeString:unitString
-                                                     value:[inputDictionary[HKPluginKeyAmount] doubleValue]
+                                                     value:[amountValue doubleValue]
                                                   metadata:metadata error:error];
     } else {
             if (![inputDictionary hasAllRequiredKeys:@[HKPluginKeyValue] error:error]) return nil;
